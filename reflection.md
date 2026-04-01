@@ -4,8 +4,15 @@
 
 **a. Initial design**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+The initial UML design splits the system into five classes, each with a single clear responsibility:
+
+- **Owner** — Holds the pet owner's name and how many minutes they have available for pet care today. Its only behavior is `set_availability()`, which updates that time budget. This class exists so the scheduler has a constraint to plan against.
+- **Pet** — Stores the pet's name, species, and any special needs (e.g., allergies, medications). `update_info()` lets the user edit these details. Keeping pet data separate from the owner means the system could support multiple pets in the future.
+- **Task** — Represents one care activity (walk, feeding, medication, grooming, or enrichment) with a duration in minutes and an integer priority (1 = highest, 3 = lowest). `edit()` allows updating any field. This is the core unit the scheduler works with.
+- **Scheduler** — The central engine. It holds references to an Owner, a Pet, and a list of Tasks. `add_task()` / `remove_task()` manage the list. `generate_plan()` is where the real logic lives: it sorts tasks by priority, fits as many as possible into the owner's available minutes, and returns a DailyPlan. `explain_plan()` produces a reasoning string for a given plan.
+- **DailyPlan** — The output object. It separates tasks into `scheduled_tasks` (what fits) and `skipped_tasks` (what didn't), tracks `total_minutes`, and carries a `reasoning` string. `display()` formats everything for the UI.
+
+I used Python `@dataclass` for Owner, Pet, Task, and DailyPlan because they are primarily data holders — dataclasses give clean `__init__`, `__repr__`, and `__eq__` for free. Scheduler is a regular class because it manages mutable state and contains the core algorithm.
 
 **Core user actions identified from the scenario:**
 
@@ -68,8 +75,11 @@ The output of the scheduler — an ordered list of tasks that fit the day's cons
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+Yes — reviewing the skeleton against the starter `app.py` revealed two mismatches that need to be addressed during implementation:
+
+1. **Priority type mismatch.** The UML and skeleton use an integer priority (1, 2, 3), but `app.py` already uses string priorities ("high", "medium", "low") in its selectbox. During implementation I will need to either convert between the two or standardize on one. Standardizing on strings in the Task class (and sorting by a known order) is likely simpler because it avoids asking the user to think in numbers.
+
+2. **`explain_plan()` is redundant with `DailyPlan.reasoning`.** The original UML puts `explain_plan(plan)` on the Scheduler *and* a `reasoning` attribute on DailyPlan. In practice the reasoning should be generated *inside* `generate_plan()` and stored directly on the DailyPlan it returns. That way `DailyPlan.display()` can present everything in one place without needing to call back into the Scheduler. I plan to fold the explanation logic into `generate_plan()` and may remove or simplify `explain_plan()` as a standalone method.
 
 ---
 
