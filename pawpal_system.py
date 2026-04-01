@@ -9,6 +9,7 @@ noted in reflection.md section 1b).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import List
 
 # Priority ordering used by the scheduler (highest first).
@@ -29,6 +30,14 @@ class Task:
     priority: str = "medium"  # "high", "medium", or "low"
     frequency: str = "daily"  # "daily", "weekly", "as needed"
     completed: bool = False
+    scheduled_time: str = ""  # "HH:MM" format, e.g. "07:30"
+    due_date: date | None = None  # when this task is due
+
+    # How far ahead each frequency pushes the next occurrence.
+    FREQUENCY_DELTA = {
+        "daily": timedelta(days=1),
+        "weekly": timedelta(weeks=1),
+    }
 
     def edit(
         self,
@@ -50,9 +59,23 @@ class Task:
         if frequency is not None:
             self.frequency = frequency
 
-    def mark_complete(self) -> None:
-        """Mark this task as done for today."""
+    def mark_complete(self) -> Task | None:
+        """Mark this task as done and return the next occurrence if recurring."""
         self.completed = True
+        delta = self.FREQUENCY_DELTA.get(self.frequency)
+        if delta is None:
+            # "as needed" — no automatic recurrence
+            return None
+        next_due = (self.due_date or date.today()) + delta
+        return Task(
+            name=self.name,
+            category=self.category,
+            duration_minutes=self.duration_minutes,
+            priority=self.priority,
+            frequency=self.frequency,
+            scheduled_time=self.scheduled_time,
+            due_date=next_due,
+        )
 
     def mark_incomplete(self) -> None:
         """Reset this task to not-done."""
@@ -79,6 +102,13 @@ class Pet:
     def remove_task(self, task: Task) -> None:
         """Remove a care task from this pet."""
         self.tasks.remove(task)
+
+    def complete_task(self, task: Task) -> Task | None:
+        """Mark a task done; if recurring, add the next occurrence automatically."""
+        next_task = task.mark_complete()
+        if next_task is not None:
+            self.tasks.append(next_task)
+        return next_task
 
     def pending_tasks(self) -> List[Task]:
         """Return only tasks that haven't been completed yet."""
@@ -136,6 +166,32 @@ class Owner:
         for pet in self.pets:
             result.extend(pet.pending_tasks())
         return result
+
+    def filter_tasks(
+        self,
+        pet_name: str | None = None,
+        completed: bool | None = None,
+        category: str | None = None,
+    ) -> List[Task]:
+        """Filter tasks across all pets by pet name, status, or category."""
+        # Start with tasks from a specific pet, or all pets
+        if pet_name is not None:
+            matching_pets = [p for p in self.pets if p.name == pet_name]
+            tasks = []
+            for pet in matching_pets:
+                tasks.extend(pet.tasks)
+        else:
+            tasks = self.all_tasks()
+
+        # Filter by completion status
+        if completed is not None:
+            tasks = [t for t in tasks if t.completed == completed]
+
+        # Filter by category
+        if category is not None:
+            tasks = [t for t in tasks if t.category == category]
+
+        return tasks
 
 
 # -------------------------------------------------------------------
@@ -196,22 +252,42 @@ class Scheduler:
     def __init__(self, owner: Owner) -> None:
         self.owner = owner
 
+    @staticmethod
+    def sort_by_time(tasks: List[Task]) -> List[Task]:
+        """Sort tasks by their scheduled_time in HH:MM format."""
+        # Tasks without a scheduled_time sort to the end.
+        # The lambda splits "HH:MM" into (hours, minutes) for
+        # correct chronological ordering.
+        return sorted(
+            tasks,
+            key=lambda t: (
+                tuple(int(x) for x in t.scheduled_time.split(":"))
+                if t.scheduled_time
+                else (99, 99)
+            ),
+        )
+
     def generate_plan(self) -> DailyPlan:
         """
         Build a DailyPlan:
         1. Collect all pending tasks from the owner's pets.
-        2. Sort by priority (high → medium → low).
+        2. Sort by priority (high > medium > low), then shortest
+           duration first within the same priority so more tasks fit.
         3. Greedily pack tasks into the owner's available time.
         4. Anything that doesn't fit goes into skipped_tasks.
         5. Attach reasoning explaining the decisions.
         """
         pending = self.owner.all_pending_tasks()
 
-        # Sort: high first, then medium, then low.
-        # Within the same priority, keep original insertion order.
+        # Multi-key sort: priority first, then shortest duration.
+        # This "shortest-job-first" secondary sort helps fit more
+        # tasks into limited time.
         sorted_tasks = sorted(
             pending,
-            key=lambda t: PRIORITY_ORDER.get(t.priority, 99),
+            key=lambda t: (
+                PRIORITY_ORDER.get(t.priority, 99),
+                t.duration_minutes,
+            ),
         )
 
         scheduled: List[Task] = []
@@ -235,6 +311,25 @@ class Scheduler:
             total_minutes=total,
             reasoning=reasoning,
         )
+
+    def detect_conflicts(self, tasks: List[Task]) -> List[str]:
+        """Return warning messages for tasks that share the same scheduled_time."""
+        # Group tasks by their scheduled_time slot.
+        time_slots: dict[str, List[Task]] = {}
+        for task in tasks:
+            if not task.scheduled_time:
+                continue
+            time_slots.setdefault(task.scheduled_time, []).append(task)
+
+        warnings: List[str] = []
+        for time, group in time_slots.items():
+            if len(group) > 1:
+                names = ", ".join(t.name for t in group)
+                warnings.append(
+                    f"Conflict at {time}: {names} "
+                    f"({len(group)} tasks overlap)"
+                )
+        return warnings
 
     def _build_reasoning(
         self,

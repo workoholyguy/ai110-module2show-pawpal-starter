@@ -87,13 +87,19 @@ Yes — reviewing the skeleton against the starter `app.py` revealed two mismatc
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers three constraints:
+
+1. **Time budget** — the owner's `available_minutes` is the hard ceiling. Tasks are packed greedily until time runs out; anything that doesn't fit is skipped.
+2. **Priority** — tasks are sorted high → medium → low so the most urgent care happens first (e.g., medication before enrichment).
+3. **Duration (secondary sort)** — within the same priority level, shorter tasks are scheduled first ("shortest-job-first"). This fits more tasks into limited time.
+
+Priority was chosen as the dominant constraint because a missed medication or feeding is more consequential than a missed play session. Time budget is the physical hard limit. Duration as a tiebreaker was added after observing that pure priority ordering sometimes left short medium-priority tasks unscheduled when a long medium-priority task consumed the remaining budget.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+**Conflict detection checks only for exact time-slot matches, not overlapping durations.** For example, a 30-minute walk at 07:00 and a 10-minute feeding at 07:15 will *not* be flagged as a conflict — only two tasks both scheduled at exactly "07:00" will trigger a warning.
+
+This tradeoff is reasonable because PawPal+ uses simple "HH:MM" strings rather than full start/end time ranges. Implementing true overlap detection would require calculating end times (`start + duration`) and comparing intervals, which adds complexity without much benefit for a daily pet-care planner where the owner manually assigns time slots. The exact-match check catches the most common mistake (accidentally double-booking a slot) with minimal code.
 
 ---
 
